@@ -38,7 +38,8 @@ import org.apache.hadoop.conf.Configuration;
  * access to the meta data of a plugin via a descriptor allow a lazy loading
  * mechanism.
  */
-public class PluginDescriptor {
+public class PluginDescriptor 
+{
   private String fPluginPath;
   private String fPluginClass = Plugin.class.getName();
   private String fPluginId;

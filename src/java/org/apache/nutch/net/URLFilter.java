@@ -29,11 +29,12 @@ import org.apache.nutch.plugin.Pluggable;
  * Used by the injector and the db updater.
  */
 
-public interface URLFilter extends Pluggable, Configurable {
-  /** The name of the extension point. */
-  public final static String X_POINT_ID = URLFilter.class.getName();
+public interface URLFilter extends Pluggable, Configurable 
+{
+	/** The name of the extension point. */
+	public final static String X_POINT_ID = URLFilter.class.getName();
 
-  /* Interface for a filter that transforms a URL: it can pass the
-     original URL through or "delete" the URL by returning null */
-  public String filter(String urlString);
+	/** Interface for a filter that transforms a URL: it can pass the
+     * original URL through or "delete" the URL by returning null */
+	public String filter(String urlString);
 }

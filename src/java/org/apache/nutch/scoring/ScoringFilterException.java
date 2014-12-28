@@ -22,22 +22,26 @@ package org.apache.nutch.scoring;
  * @author Andrzej Bialecki
  */
 @SuppressWarnings("serial")
-public class ScoringFilterException extends Exception {
+public class ScoringFilterException extends Exception 
+{
+	public ScoringFilterException() 
+	{
+		super();
+	}
 
-  public ScoringFilterException() {
-    super();
-  }
+	public ScoringFilterException(String message) 
+	{
+		super(message);
+	}
 
-  public ScoringFilterException(String message) {
-    super(message);
-  }
+	public ScoringFilterException(String message, Throwable cause) 
+	{
+		super(message, cause);
+	}
 
-  public ScoringFilterException(String message, Throwable cause) {
-    super(message, cause);
-  }
-
-  public ScoringFilterException(Throwable cause) {
-    super(cause);
-  }
+	public ScoringFilterException(Throwable cause) 
+	{
+		super(cause);
+	}
 
 }

@@ -66,8 +66,7 @@ public class PluginRepository {
     this.auto = conf.getBoolean("plugin.auto-activation", true);
     String[] pluginFolders = conf.getStrings("plugin.folders");
     PluginManifestParser manifestParser = new PluginManifestParser(conf, this);
-    Map<String, PluginDescriptor> allPlugins = manifestParser
-        .parsePluginFolder(pluginFolders);
+    Map<String, PluginDescriptor> allPlugins = manifestParser.parsePluginFolder(pluginFolders);
     Pattern excludes = Pattern.compile(conf.get("plugin.excludes", ""));
     Pattern includes = Pattern.compile(conf.get("plugin.includes", ""));
     Map<String, PluginDescriptor> filteredPlugins = filter(excludes, includes,

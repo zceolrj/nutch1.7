@@ -27,6 +27,7 @@ package org.apache.nutch.plugin;
  * @see <a href="package-summary.html#package_description">
  *      plugin package description</a>
  */
-public interface Pluggable {
+public interface Pluggable 
+{
   
 }

@@ -20,59 +20,74 @@ package org.apache.nutch.crawl;
 import java.io.*;
 import org.apache.hadoop.io.*;
 
-/* An incoming link to a page. */
-public class Inlink implements Writable {
+/** An incoming link to a page. */
+public class Inlink implements Writable 
+{
+	private String fromUrl;
+	private String anchor;
 
-  private String fromUrl;
-  private String anchor;
+	public Inlink() {}
 
-  public Inlink() {}
+	public Inlink(String fromUrl, String anchor) 
+	{
+		this.fromUrl = fromUrl;
+		this.anchor = anchor;
+	}
 
-  public Inlink(String fromUrl, String anchor) {
-    this.fromUrl = fromUrl;
-    this.anchor = anchor;
-  }
+	public void readFields(DataInput in) throws IOException 
+	{
+		fromUrl = Text.readString(in);
+		anchor = Text.readString(in);
+	}
 
-  public void readFields(DataInput in) throws IOException {
-    fromUrl = Text.readString(in);
-    anchor = Text.readString(in);
-  }
+	/** Skips over one Inlink in the input. */
+	public static void skip(DataInput in) throws IOException 
+	{
+		Text.skip(in);                                // skip fromUrl
+		Text.skip(in);                                // skip anchor
+	}
 
-  /** Skips over one Inlink in the input. */
-  public static void skip(DataInput in) throws IOException {
-    Text.skip(in);                                // skip fromUrl
-    Text.skip(in);                                // skip anchor
-  }
+	public void write(DataOutput out) throws IOException 
+	{
+		Text.writeString(out, fromUrl);
+		Text.writeString(out, anchor);
+	}
 
-  public void write(DataOutput out) throws IOException {
-    Text.writeString(out, fromUrl);
-    Text.writeString(out, anchor);
-  }
+	public static Inlink read(DataInput in) throws IOException 
+	{
+		Inlink inlink = new Inlink();
+		inlink.readFields(in);
+		return inlink;
+	}
 
-  public static Inlink read(DataInput in) throws IOException {
-    Inlink inlink = new Inlink();
-    inlink.readFields(in);
-    return inlink;
-  }
+	public String getFromUrl() 
+	{ 
+		return fromUrl; 
+	}
+	
+	public String getAnchor() 
+	{ 
+		return anchor; 
+	}
 
-  public String getFromUrl() { return fromUrl; }
-  public String getAnchor() { return anchor; }
+	public boolean equals(Object o) 
+	{
+	    if (!(o instanceof Inlink))
+	    {
+	    	return false;
+	    }
+	    Inlink other = (Inlink)o;
+	    return this.fromUrl.equals(other.fromUrl) && this.anchor.equals(other.anchor);
+	}
 
-  public boolean equals(Object o) {
-    if (!(o instanceof Inlink))
-      return false;
-    Inlink other = (Inlink)o;
-    return
-      this.fromUrl.equals(other.fromUrl) &&
-      this.anchor.equals(other.anchor);
-  }
+	public int hashCode() 
+	{
+		return fromUrl.hashCode() ^ anchor.hashCode();
+	}
 
-  public int hashCode() {
-    return fromUrl.hashCode() ^ anchor.hashCode();
-  }
-
-  public String toString() {
-    return "fromUrl: " + fromUrl + " anchor: " + anchor;
-  }
+	public String toString() 
+	{
+		return "fromUrl: " + fromUrl + " anchor: " + anchor;
+	}
 
 }
