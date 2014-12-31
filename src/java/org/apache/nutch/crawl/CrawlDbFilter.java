@@ -35,74 +35,87 @@ import org.apache.nutch.net.URLNormalizers;
  * 
  * @author Andrzej Bialecki
  */
-public class CrawlDbFilter implements Mapper<Text, CrawlDatum, Text, CrawlDatum> {
-  public static final String URL_FILTERING = "crawldb.url.filters";
+public class CrawlDbFilter implements Mapper<Text, CrawlDatum, Text, CrawlDatum> 
+{
+	public static final String URL_FILTERING = "crawldb.url.filters";
 
-  public static final String URL_NORMALIZING = "crawldb.url.normalizers";
+	public static final String URL_NORMALIZING = "crawldb.url.normalizers";
 
-  public static final String URL_NORMALIZING_SCOPE = "crawldb.url.normalizers.scope";
+	public static final String URL_NORMALIZING_SCOPE = "crawldb.url.normalizers.scope";
 
-  private boolean urlFiltering;
+	private boolean urlFiltering;
 
-  private boolean urlNormalizers;
+	private boolean urlNormalizers;
 
-  private boolean url404Purging;
+	private boolean url404Purging;
 
-  private URLFilters filters;
+	private URLFilters filters;
 
-  private URLNormalizers normalizers;
+	private URLNormalizers normalizers;
   
-  private String scope;
+	private String scope;
 
-  public static final Logger LOG = LoggerFactory.getLogger(CrawlDbFilter.class);
+	public static final Logger LOG = LoggerFactory.getLogger(CrawlDbFilter.class);
 
-  public void configure(JobConf job) {
-    urlFiltering = job.getBoolean(URL_FILTERING, false);
-    urlNormalizers = job.getBoolean(URL_NORMALIZING, false);
-    url404Purging = job.getBoolean(CrawlDb.CRAWLDB_PURGE_404, false);
+	public void configure(JobConf job) 
+	{
+	    urlFiltering = job.getBoolean(URL_FILTERING, false);
+	    urlNormalizers = job.getBoolean(URL_NORMALIZING, false);
+	    url404Purging = job.getBoolean(CrawlDb.CRAWLDB_PURGE_404, false);
+	
+	    if (urlFiltering) 
+	    {
+	    	filters = new URLFilters(job);
+	    }
+	    if (urlNormalizers) 
+	    {
+	    	scope = job.get(URL_NORMALIZING_SCOPE, URLNormalizers.SCOPE_CRAWLDB);
+	    	normalizers = new URLNormalizers(job, scope);
+	    }
+	}
 
-    if (urlFiltering) {
-      filters = new URLFilters(job);
-    }
-    if (urlNormalizers) {
-      scope = job.get(URL_NORMALIZING_SCOPE, URLNormalizers.SCOPE_CRAWLDB);
-      normalizers = new URLNormalizers(job, scope);
-    }
-  }
-
-  public void close() {}
+	public void close() {}
   
-  private Text newKey = new Text();
+	private Text newKey = new Text();
 
-  public void map(Text key, CrawlDatum value,
-      OutputCollector<Text, CrawlDatum> output,
-      Reporter reporter) throws IOException {
-
-    String url = key.toString();
-
-    // https://issues.apache.org/jira/browse/NUTCH-1101 check status first, cheaper than normalizing or filtering
-    if (url404Purging && CrawlDatum.STATUS_DB_GONE == value.getStatus()) {
-      url = null;
-    }
-    if (url != null && urlNormalizers) {
-      try {
-        url = normalizers.normalize(url, scope); // normalize the url
-      } catch (Exception e) {
-        LOG.warn("Skipping " + url + ":" + e);
-        url = null;
-      }
-    }
-    if (url != null && urlFiltering) {
-      try {
-        url = filters.filter(url); // filter the url
-      } catch (Exception e) {
-        LOG.warn("Skipping " + url + ":" + e);
-        url = null;
-      }
-    }
-    if (url != null) { // if it passes
-      newKey.set(url); // collect it
-      output.collect(newKey, value);
-    }
-  }
+	public void map(Text key, CrawlDatum value, OutputCollector<Text, CrawlDatum> output,
+			Reporter reporter) throws IOException 
+	{
+	    String url = key.toString();
+	
+	    // https://issues.apache.org/jira/browse/NUTCH-1101 check status first, cheaper than normalizing or filtering
+	    if (url404Purging && CrawlDatum.STATUS_DB_GONE == value.getStatus()) 
+	    {
+	    	url = null;
+	    }
+	    if (url != null && urlNormalizers) 
+	    {
+	    	try 
+	    	{
+	    		url = normalizers.normalize(url, scope); // normalize the url
+	    	} 
+	    	catch (Exception e) 
+	    	{
+		        LOG.warn("Skipping " + url + ":" + e);
+		        url = null;
+	    	}
+	    }
+	    if (url != null && urlFiltering) 
+	    {
+	    	try 
+	    	{
+	    		url = filters.filter(url); // filter the url
+	    	} 
+	    	catch (Exception e) 
+	    	{
+	    		LOG.warn("Skipping " + url + ":" + e);
+	    		url = null;
+	    	}
+	    }
+	    if (url != null) // if it passes
+	    { 
+	    	newKey.set(url); // collect it
+	    	output.collect(newKey, value);
+	    }
+	}
 }
