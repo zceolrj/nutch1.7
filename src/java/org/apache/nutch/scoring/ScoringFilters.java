@@ -43,104 +43,134 @@ import org.apache.hadoop.io.Text;
  * 
  * @author Andrzej Bialecki
  */
-public class ScoringFilters extends Configured implements ScoringFilter {
+public class ScoringFilters extends Configured implements ScoringFilter 
+{
+	private ScoringFilter[] filters;
 
-  private ScoringFilter[] filters;
+	public ScoringFilters(Configuration conf) 
+	{
+	    super(conf);
+	    ObjectCache objectCache = ObjectCache.get(conf);
+	    String order = conf.get("scoring.filter.order");
+	    this.filters = (ScoringFilter[]) objectCache.getObject(ScoringFilter.class.getName());
+	
+	    if (this.filters == null) 
+	    {
+	    	String[] orderedFilters = null;
+	    	if (order != null && !order.trim().equals("")) 
+	    	{
+	    		orderedFilters = order.trim().split("\\s+");
+	    	}
+	
+	    	try 
+	    	{
+		        ExtensionPoint point = PluginRepository.get(conf).getExtensionPoint(ScoringFilter.X_POINT_ID);
+		        if (point == null) throw new RuntimeException(ScoringFilter.X_POINT_ID + " not found.");
+		        Extension[] extensions = point.getExtensions();
+		        HashMap<String, ScoringFilter> filterMap = new HashMap<String, ScoringFilter>();
+		        for (int i = 0; i < extensions.length; i++) 
+		        {
+		        	Extension extension = extensions[i];
+		        	ScoringFilter filter = (ScoringFilter) extension.getExtensionInstance();
+		        	if (!filterMap.containsKey(filter.getClass().getName())) 
+		        	{
+		        		filterMap.put(filter.getClass().getName(), filter);
+		        	}
+		        }
+		        if (orderedFilters == null) 
+		        {
+		        	objectCache.setObject(ScoringFilter.class.getName(), filterMap.values().toArray(new ScoringFilter[0]));
+		        } 
+		        else 
+		        {
+		        	ScoringFilter[] filter = new ScoringFilter[orderedFilters.length];
+		        	for (int i = 0; i < orderedFilters.length; i++) 
+		        	{
+		        		filter[i] = filterMap.get(orderedFilters[i]);
+		        	}
+		        	objectCache.setObject(ScoringFilter.class.getName(), filter);
+		        }
+	    	} 
+	    	catch (PluginRuntimeException e) 
+	    	{
+	    		throw new RuntimeException(e);
+	    	}
+	    	this.filters = (ScoringFilter[]) objectCache.getObject(ScoringFilter.class.getName());
+	    }
+	}
 
-  public ScoringFilters(Configuration conf) {
-    super(conf);
-    ObjectCache objectCache = ObjectCache.get(conf);
-    String order = conf.get("scoring.filter.order");
-    this.filters = (ScoringFilter[]) objectCache.getObject(ScoringFilter.class.getName());
+	/** Calculate a sort value for Generate. */
+	public float generatorSortValue(Text url, CrawlDatum datum, float initSort) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	initSort = this.filters[i].generatorSortValue(url, datum, initSort);
+	    }
+	    return initSort;
+	}
 
-    if (this.filters == null) {
-      String[] orderedFilters = null;
-      if (order != null && !order.trim().equals("")) {
-        orderedFilters = order.trim().split("\\s+");
-      }
+	/** Calculate a new initial score, used when adding newly discovered pages. */
+	public void initialScore(Text url, CrawlDatum datum) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	this.filters[i].initialScore(url, datum);
+	    }
+	}
 
-      try {
-        ExtensionPoint point = PluginRepository.get(conf).getExtensionPoint(ScoringFilter.X_POINT_ID);
-        if (point == null) throw new RuntimeException(ScoringFilter.X_POINT_ID + " not found.");
-        Extension[] extensions = point.getExtensions();
-        HashMap<String, ScoringFilter> filterMap =
-          new HashMap<String, ScoringFilter>();
-        for (int i = 0; i < extensions.length; i++) {
-          Extension extension = extensions[i];
-          ScoringFilter filter = (ScoringFilter) extension.getExtensionInstance();
-          if (!filterMap.containsKey(filter.getClass().getName())) {
-            filterMap.put(filter.getClass().getName(), filter);
-          }
-        }
-        if (orderedFilters == null) {
-          objectCache.setObject(ScoringFilter.class.getName(), filterMap.values().toArray(new ScoringFilter[0]));
-        } else {
-          ScoringFilter[] filter = new ScoringFilter[orderedFilters.length];
-          for (int i = 0; i < orderedFilters.length; i++) {
-            filter[i] = filterMap.get(orderedFilters[i]);
-          }
-          objectCache.setObject(ScoringFilter.class.getName(), filter);
-        }
-      } catch (PluginRuntimeException e) {
-        throw new RuntimeException(e);
-      }
-      this.filters = (ScoringFilter[]) objectCache.getObject(ScoringFilter.class.getName());
-    }
-  }
+	/** Calculate a new initial score, used when injecting new pages. */
+	public void injectedScore(Text url, CrawlDatum datum) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	this.filters[i].injectedScore(url, datum);
+	    }
+	}
 
-  /** Calculate a sort value for Generate. */
-  public float generatorSortValue(Text url, CrawlDatum datum, float initSort) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      initSort = this.filters[i].generatorSortValue(url, datum, initSort);
-    }
-    return initSort;
-  }
+	/** Calculate updated page score during CrawlDb.update(). */
+	public void updateDbScore(Text url, CrawlDatum old, CrawlDatum datum, List<CrawlDatum> inlinked) 
+					throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	this.filters[i].updateDbScore(url, old, datum, inlinked);
+	    }
+	}
 
-  /** Calculate a new initial score, used when adding newly discovered pages. */
-  public void initialScore(Text url, CrawlDatum datum) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      this.filters[i].initialScore(url, datum);
-    }
-  }
-
-  /** Calculate a new initial score, used when injecting new pages. */
-  public void injectedScore(Text url, CrawlDatum datum) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      this.filters[i].injectedScore(url, datum);
-    }
-  }
-
-  /** Calculate updated page score during CrawlDb.update(). */
-  public void updateDbScore(Text url, CrawlDatum old, CrawlDatum datum, List<CrawlDatum> inlinked) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      this.filters[i].updateDbScore(url, old, datum, inlinked);
-    }
-  }
-
-  public void passScoreBeforeParsing(Text url, CrawlDatum datum, Content content) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      this.filters[i].passScoreBeforeParsing(url, datum, content);
-    }
-  }
+	public void passScoreBeforeParsing(Text url, CrawlDatum datum, Content content) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	this.filters[i].passScoreBeforeParsing(url, datum, content);
+	    }
+	}
   
-  public void passScoreAfterParsing(Text url, Content content, Parse parse) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      this.filters[i].passScoreAfterParsing(url, content, parse);
-    }
-  }
+	public void passScoreAfterParsing(Text url, Content content, Parse parse) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	this.filters[i].passScoreAfterParsing(url, content, parse);
+	    }
+	}
   
-  public CrawlDatum distributeScoreToOutlinks(Text fromUrl, ParseData parseData, Collection<Entry<Text, CrawlDatum>> targets, CrawlDatum adjust, int allCount) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      adjust = this.filters[i].distributeScoreToOutlinks(fromUrl, parseData, targets, adjust, allCount);
-    }
-    return adjust;
-  }
+	public CrawlDatum distributeScoreToOutlinks(Text fromUrl, ParseData parseData, 
+				Collection<Entry<Text, CrawlDatum>> targets, CrawlDatum adjust, int allCount) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	adjust = this.filters[i].distributeScoreToOutlinks(fromUrl, parseData, targets, adjust, allCount);
+	    }
+	    return adjust;
+	}
 
-  public float indexerScore(Text url, NutchDocument doc, CrawlDatum dbDatum, CrawlDatum fetchDatum, Parse parse, Inlinks inlinks, float initScore) throws ScoringFilterException {
-    for (int i = 0; i < this.filters.length; i++) {
-      initScore = this.filters[i].indexerScore(url, doc, dbDatum, fetchDatum, parse, inlinks, initScore);
-    }
-    return initScore;
-  }
+	public float indexerScore(Text url, NutchDocument doc, CrawlDatum dbDatum, CrawlDatum fetchDatum, 
+					Parse parse, Inlinks inlinks, float initScore) throws ScoringFilterException 
+	{
+	    for (int i = 0; i < this.filters.length; i++) 
+	    {
+	    	initScore = this.filters[i].indexerScore(url, doc, dbDatum, fetchDatum, parse, inlinks, initScore);
+	    }
+	    return initScore;
+	}
 
 }

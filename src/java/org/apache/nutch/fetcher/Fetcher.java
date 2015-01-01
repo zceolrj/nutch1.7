@@ -27,10 +27,15 @@ import java.util.Map.Entry;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+
+
+
+
+
+
 // Slf4j Logging imports
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.conf.*;
@@ -38,7 +43,6 @@ import org.apache.hadoop.mapred.*;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
-
 import org.apache.nutch.crawl.CrawlDatum;
 import org.apache.nutch.crawl.NutchWritable;
 import org.apache.nutch.crawl.SignatureFactory;
@@ -89,510 +93,624 @@ import crawlercommons.robots.BaseRobotRules;
  * @author Andrzej Bialecki
  */
 public class Fetcher extends Configured implements Tool,
-    MapRunnable<Text, CrawlDatum, Text, NutchWritable> {
+    					MapRunnable<Text, CrawlDatum, Text, NutchWritable> 
+{
+	public static final int PERM_REFRESH_TIME = 5;
 
-  public static final int PERM_REFRESH_TIME = 5;
+	public static final String CONTENT_REDIR = "content";
 
-  public static final String CONTENT_REDIR = "content";
+	public static final String PROTOCOL_REDIR = "protocol";
 
-  public static final String PROTOCOL_REDIR = "protocol";
+	public static final Logger LOG = LoggerFactory.getLogger(Fetcher.class);
 
-  public static final Logger LOG = LoggerFactory.getLogger(Fetcher.class);
+	public static class InputFormat extends SequenceFileInputFormat<Text, CrawlDatum> 
+	{
+	    /** Don't split inputs, to keep things polite. */
+	    public InputSplit[] getSplits(JobConf job, int nSplits) throws IOException 
+	    {
+	    	FileStatus[] files = listStatus(job);
+	    	FileSplit[] splits = new FileSplit[files.length];
+	    	for (int i = 0; i < files.length; i++) 
+	    	{
+	    		FileStatus cur = files[i];
+	    		splits[i] = new FileSplit(cur.getPath(), 0, cur.getLen(), (String[])null);
+	    	}
+	    	return splits;
+	    }
+	}
 
-  public static class InputFormat extends SequenceFileInputFormat<Text, CrawlDatum> {
-    /** Don't split inputs, to keep things polite. */
-    public InputSplit[] getSplits(JobConf job, int nSplits)
-      throws IOException {
-      FileStatus[] files = listStatus(job);
-      FileSplit[] splits = new FileSplit[files.length];
-      for (int i = 0; i < files.length; i++) {
-        FileStatus cur = files[i];
-        splits[i] = new FileSplit(cur.getPath(), 0,
-            cur.getLen(), (String[])null);
-      }
-      return splits;
-    }
-  }
+	private OutputCollector<Text, NutchWritable> output;
+	private Reporter reporter;
 
-  private OutputCollector<Text, NutchWritable> output;
-  private Reporter reporter;
+	private String segmentName;
+	private AtomicInteger activeThreads = new AtomicInteger(0);
+	private AtomicInteger spinWaiting = new AtomicInteger(0);
 
-  private String segmentName;
-  private AtomicInteger activeThreads = new AtomicInteger(0);
-  private AtomicInteger spinWaiting = new AtomicInteger(0);
+	private long start = System.currentTimeMillis(); // start time of fetcher run
+	private AtomicLong lastRequestStart = new AtomicLong(start);
 
-  private long start = System.currentTimeMillis(); // start time of fetcher run
-  private AtomicLong lastRequestStart = new AtomicLong(start);
+	private AtomicLong bytes = new AtomicLong(0);        // total bytes fetched
+	private AtomicInteger pages = new AtomicInteger(0);  // total pages fetched
+	private AtomicInteger errors = new AtomicInteger(0); // total pages errored
 
-  private AtomicLong bytes = new AtomicLong(0);        // total bytes fetched
-  private AtomicInteger pages = new AtomicInteger(0);  // total pages fetched
-  private AtomicInteger errors = new AtomicInteger(0); // total pages errored
+	private boolean storingContent;
+	private boolean parsing;
+	FetchItemQueues fetchQueues;
+	QueueFeeder feeder;
 
-  private boolean storingContent;
-  private boolean parsing;
-  FetchItemQueues fetchQueues;
-  QueueFeeder feeder;
+	/**
+	 * This class described the item to be fetched.
+	 */
+	private static class FetchItem 
+	{
+		int outlinkDepth = 0;
+		String queueID;
+		Text url;
+		URL u;
+		CrawlDatum datum;
 
-  /**
-   * This class described the item to be fetched.
-   */
-  private static class FetchItem {
-    int outlinkDepth = 0;
-    String queueID;
-    Text url;
-    URL u;
-    CrawlDatum datum;
+		@SuppressWarnings("unused")
+		public FetchItem(Text url, URL u, CrawlDatum datum, String queueID) 
+		{
+			this(url, u, datum, queueID, 0);
+		}
 
-    public FetchItem(Text url, URL u, CrawlDatum datum, String queueID) {
-      this(url, u, datum, queueID, 0);
-    }
+		public FetchItem(Text url, URL u, CrawlDatum datum, String queueID, int outlinkDepth) 
+		{
+			this.url = url;
+			this.u = u;
+			this.datum = datum;
+			this.queueID = queueID;
+			this.outlinkDepth = outlinkDepth;
+		}
 
-    public FetchItem(Text url, URL u, CrawlDatum datum, String queueID, int outlinkDepth) {
-      this.url = url;
-      this.u = u;
-      this.datum = datum;
-      this.queueID = queueID;
-      this.outlinkDepth = outlinkDepth;
-    }
+		/** Create an item. Queue id will be created based on <code>queueMode</code>
+		 * argument, either as a protocol + hostname pair, protocol + IP
+		 * address pair or protocol+domain pair.
+		 */
+		public static FetchItem create(Text url, CrawlDatum datum,  String queueMode) 
+		{
+			return create(url, datum, queueMode, 0);
+		}
 
-    /** Create an item. Queue id will be created based on <code>queueMode</code>
-     * argument, either as a protocol + hostname pair, protocol + IP
-     * address pair or protocol+domain pair.
-     */
-    public static FetchItem create(Text url, CrawlDatum datum,  String queueMode) {
-      return create(url, datum, queueMode, 0);
-    }
+		public static FetchItem create(Text url, CrawlDatum datum,  String queueMode, int outlinkDepth) 
+		{
+			String queueID;
+			URL u = null;
+			try 
+			{
+				u = new URL(url.toString());
+			} 
+			catch (Exception e) 
+			{
+				LOG.warn("Cannot parse url: " + url, e);
+				return null;
+			}
+			final String proto = u.getProtocol().toLowerCase();
+			String key;
+			if (FetchItemQueues.QUEUE_MODE_IP.equalsIgnoreCase(queueMode)) 
+			{
+		        try 
+		        {
+		        	final InetAddress addr = InetAddress.getByName(u.getHost());
+		        	key = addr.getHostAddress();
+		        } 
+		        catch (final UnknownHostException e) 
+		        {
+		        	// unable to resolve it, so don't fall back to host name
+		        	LOG.warn("Unable to resolve: " + u.getHost() + ", skipping.");
+		        	return null;
+		        }
+			}
+			else if (FetchItemQueues.QUEUE_MODE_DOMAIN.equalsIgnoreCase(queueMode))
+			{
+		        key = URLUtil.getDomainName(u);
+		        if (key == null) 
+		        {
+		        	LOG.warn("Unknown domain for url: " + url + ", using URL string as key");
+		        	key=u.toExternalForm();
+		        }
+			}
+			else 
+			{
+		        key = u.getHost();
+		        if (key == null) 
+		        {
+		        	LOG.warn("Unknown host for url: " + url + ", using URL string as key");
+		        	key=u.toExternalForm();
+		        }
+			}
+			queueID = proto + "://" + key.toLowerCase();
+			return new FetchItem(url, u, datum, queueID, outlinkDepth);
+		}
 
-    public static FetchItem create(Text url, CrawlDatum datum,  String queueMode, int outlinkDepth) {
-      String queueID;
-      URL u = null;
-      try {
-        u = new URL(url.toString());
-      } catch (Exception e) {
-        LOG.warn("Cannot parse url: " + url, e);
-        return null;
-      }
-      final String proto = u.getProtocol().toLowerCase();
-      String key;
-      if (FetchItemQueues.QUEUE_MODE_IP.equalsIgnoreCase(queueMode)) {
-        try {
-          final InetAddress addr = InetAddress.getByName(u.getHost());
-          key = addr.getHostAddress();
-        } catch (final UnknownHostException e) {
-          // unable to resolve it, so don't fall back to host name
-          LOG.warn("Unable to resolve: " + u.getHost() + ", skipping.");
-          return null;
-        }
-      }
-      else if (FetchItemQueues.QUEUE_MODE_DOMAIN.equalsIgnoreCase(queueMode)){
-        key = URLUtil.getDomainName(u);
-        if (key == null) {
-          LOG.warn("Unknown domain for url: " + url + ", using URL string as key");
-          key=u.toExternalForm();
-        }
-      }
-      else {
-        key = u.getHost();
-        if (key == null) {
-          LOG.warn("Unknown host for url: " + url + ", using URL string as key");
-          key=u.toExternalForm();
-        }
-      }
-      queueID = proto + "://" + key.toLowerCase();
-      return new FetchItem(url, u, datum, queueID, outlinkDepth);
-    }
+	    @SuppressWarnings("unused")
+		public CrawlDatum getDatum() 
+	    {
+	    	return datum;
+	    }
 
-    public CrawlDatum getDatum() {
-      return datum;
-    }
+	    public String getQueueID() 
+	    {
+	    	return queueID;
+	    }
 
-    public String getQueueID() {
-      return queueID;
-    }
+	    @SuppressWarnings("unused")
+		public Text getUrl() 
+	    {
+	    	return url;
+	    }
 
-    public Text getUrl() {
-      return url;
-    }
+	    @SuppressWarnings("unused")
+		public URL getURL2() 
+	    {
+	    	return u;
+	    }
+	}
 
-    public URL getURL2() {
-      return u;
-    }
-  }
+	/**
+	 * This class handles FetchItems which come from the same host ID (be it
+	 * a proto/hostname or proto/IP pair). It also keeps track of requests in
+	 * progress and elapsed time between requests.
+	 */
+	private static class FetchItemQueue 
+	{
+		List<FetchItem> queue = Collections.synchronizedList(new LinkedList<FetchItem>());
+		Set<FetchItem>  inProgress = Collections.synchronizedSet(new HashSet<FetchItem>());
+		AtomicLong nextFetchTime = new AtomicLong();
+		AtomicInteger exceptionCounter = new AtomicInteger();
+		long crawlDelay;
+		long minCrawlDelay;
+    	int maxThreads;
+    	@SuppressWarnings("unused")
+    	Configuration conf;
 
-  /**
-   * This class handles FetchItems which come from the same host ID (be it
-   * a proto/hostname or proto/IP pair). It also keeps track of requests in
-   * progress and elapsed time between requests.
-   */
-  private static class FetchItemQueue {
-    List<FetchItem> queue = Collections.synchronizedList(new LinkedList<FetchItem>());
-    Set<FetchItem>  inProgress = Collections.synchronizedSet(new HashSet<FetchItem>());
-    AtomicLong nextFetchTime = new AtomicLong();
-    AtomicInteger exceptionCounter = new AtomicInteger();
-    long crawlDelay;
-    long minCrawlDelay;
-    int maxThreads;
-    Configuration conf;
+    	public FetchItemQueue(Configuration conf, int maxThreads, long crawlDelay, long minCrawlDelay) 
+    	{
+    		this.conf = conf;
+    		this.maxThreads = maxThreads;
+    		this.crawlDelay = crawlDelay;
+    		this.minCrawlDelay = minCrawlDelay;
+    		// ready to start
+    		setEndTime(System.currentTimeMillis() - crawlDelay);
+    	}
 
-    public FetchItemQueue(Configuration conf, int maxThreads, long crawlDelay, long minCrawlDelay) {
-      this.conf = conf;
-      this.maxThreads = maxThreads;
-      this.crawlDelay = crawlDelay;
-      this.minCrawlDelay = minCrawlDelay;
-      // ready to start
-      setEndTime(System.currentTimeMillis() - crawlDelay);
-    }
+    	public synchronized int emptyQueue() 
+    	{
+    		int presize = queue.size();
+    		queue.clear();
+    		return presize;
+    	}
 
-    public synchronized int emptyQueue() {
-      int presize = queue.size();
-      queue.clear();
-      return presize;
-    }
+    	public int getQueueSize() 
+    	{
+    		return queue.size();
+    	}
 
-    public int getQueueSize() {
-      return queue.size();
-    }
+    	public int getInProgressSize() 
+    	{
+    		return inProgress.size();
+    	}
 
-    public int getInProgressSize() {
-      return inProgress.size();
-    }
+    	public int incrementExceptionCounter() 
+    	{
+    		return exceptionCounter.incrementAndGet();
+    	}
 
-    public int incrementExceptionCounter() {
-      return exceptionCounter.incrementAndGet();
-    }
+    	public void finishFetchItem(FetchItem it, boolean asap) 
+    	{
+    		if (it != null) 
+    		{
+    			inProgress.remove(it);
+    			setEndTime(System.currentTimeMillis(), asap);
+    		}
+    	}
 
-    public void finishFetchItem(FetchItem it, boolean asap) {
-      if (it != null) {
-        inProgress.remove(it);
-        setEndTime(System.currentTimeMillis(), asap);
-      }
-    }
+    	public void addFetchItem(FetchItem it) 
+    	{
+    		if (it == null) 
+    		{
+    			return;
+    		}
+    		queue.add(it);
+    	}
 
-    public void addFetchItem(FetchItem it) {
-      if (it == null) return;
-      queue.add(it);
-    }
+	    public void addInProgressFetchItem(FetchItem it) 
+	    {
+	    	if (it == null) 
+	    	{
+	    		return;
+	    	}
+	    	inProgress.add(it);
+	    }
 
-    public void addInProgressFetchItem(FetchItem it) {
-      if (it == null) return;
-      inProgress.add(it);
-    }
+	    public FetchItem getFetchItem() 
+	    {
+	    	if (inProgress.size() >= maxThreads) 
+	    	{
+	    		return null;
+	    	}
+	    	long now = System.currentTimeMillis();
+	    	if (nextFetchTime.get() > now) 
+	    	{
+	    		return null;
+	    	}
+	    	FetchItem it = null;
+	    	if (queue.size() == 0) 
+	    	{
+	    		return null;
+	    	}
+	    	try 
+	    	{
+	    		it = queue.remove(0);
+	    		inProgress.add(it);
+	    	} 
+	    	catch (Exception e) 
+	    	{
+	    		LOG.error("Cannot remove FetchItem from queue or cannot add it to inProgress queue", e);
+	    	}
+	    	return it;
+	    }
 
-    public FetchItem getFetchItem() {
-      if (inProgress.size() >= maxThreads) return null;
-      long now = System.currentTimeMillis();
-      if (nextFetchTime.get() > now) return null;
-      FetchItem it = null;
-      if (queue.size() == 0) return null;
-      try {
-        it = queue.remove(0);
-        inProgress.add(it);
-      } catch (Exception e) {
-        LOG.error("Cannot remove FetchItem from queue or cannot add it to inProgress queue", e);
-      }
-      return it;
-    }
+	    public synchronized void dump() 
+	    {
+	    	LOG.info("  maxThreads    = " + maxThreads);
+	    	LOG.info("  inProgress    = " + inProgress.size());
+	    	LOG.info("  crawlDelay    = " + crawlDelay);
+	    	LOG.info("  minCrawlDelay = " + minCrawlDelay);
+	    	LOG.info("  nextFetchTime = " + nextFetchTime.get());
+	    	LOG.info("  now           = " + System.currentTimeMillis());
+	    	for (int i = 0; i < queue.size(); i++) 
+	    	{
+	    		FetchItem it = queue.get(i);
+	    		LOG.info("  " + i + ". " + it.url);
+	    	}
+	    }
 
-    public synchronized void dump() {
-      LOG.info("  maxThreads    = " + maxThreads);
-      LOG.info("  inProgress    = " + inProgress.size());
-      LOG.info("  crawlDelay    = " + crawlDelay);
-      LOG.info("  minCrawlDelay = " + minCrawlDelay);
-      LOG.info("  nextFetchTime = " + nextFetchTime.get());
-      LOG.info("  now           = " + System.currentTimeMillis());
-      for (int i = 0; i < queue.size(); i++) {
-        FetchItem it = queue.get(i);
-        LOG.info("  " + i + ". " + it.url);
-      }
-    }
+	    private void setEndTime(long endTime) 
+	    {
+	    	setEndTime(endTime, false);
+	    }
 
-    private void setEndTime(long endTime) {
-      setEndTime(endTime, false);
-    }
+	    private void setEndTime(long endTime, boolean asap) 
+	    {
+	    	if (!asap)
+	    	{
+	    		nextFetchTime.set(endTime + (maxThreads > 1 ? minCrawlDelay : crawlDelay));
+	    	}
+	    	else
+	    	{
+	    		nextFetchTime.set(endTime);
+	    	}
+	    }
+	}
 
-    private void setEndTime(long endTime, boolean asap) {
-      if (!asap)
-        nextFetchTime.set(endTime + (maxThreads > 1 ? minCrawlDelay : crawlDelay));
-      else
-        nextFetchTime.set(endTime);
-    }
-  }
+	/**
+	 * Convenience class - a collection of queues that keeps track of the total
+	 * number of items, and provides items eligible for fetching from any queue.
+	 */
+	private static class FetchItemQueues 
+	{
+	    @SuppressWarnings("unused")
+		public static final String DEFAULT_ID = "default";
+	    Map<String, FetchItemQueue> queues = new HashMap<String, FetchItemQueue>();
+	    AtomicInteger totalSize = new AtomicInteger(0);
+	    int maxThreads;
+	    long crawlDelay;
+	    long minCrawlDelay;
+	    long timelimit = -1;
+	    int maxExceptionsPerQueue = -1;
+	    Configuration conf;
+	
+	    public static final String QUEUE_MODE_HOST = "byHost";
+	    public static final String QUEUE_MODE_DOMAIN = "byDomain";
+	    public static final String QUEUE_MODE_IP = "byIP";
+	
+	    String queueMode;
 
-  /**
-   * Convenience class - a collection of queues that keeps track of the total
-   * number of items, and provides items eligible for fetching from any queue.
-   */
-  private static class FetchItemQueues {
-    public static final String DEFAULT_ID = "default";
-    Map<String, FetchItemQueue> queues = new HashMap<String, FetchItemQueue>();
-    AtomicInteger totalSize = new AtomicInteger(0);
-    int maxThreads;
-    long crawlDelay;
-    long minCrawlDelay;
-    long timelimit = -1;
-    int maxExceptionsPerQueue = -1;
-    Configuration conf;
+	    public FetchItemQueues(Configuration conf) 
+	    {
+	    	this.conf = conf;
+	    	this.maxThreads = conf.getInt("fetcher.threads.per.queue", 1);
+	    	queueMode = conf.get("fetcher.queue.mode", QUEUE_MODE_HOST);
+	    	// check that the mode is known
+	    	if (!queueMode.equals(QUEUE_MODE_IP) && !queueMode.equals(QUEUE_MODE_DOMAIN)
+	    			&& !queueMode.equals(QUEUE_MODE_HOST)) 
+	    	{
+	    		LOG.error("Unknown partition mode : " + queueMode + " - forcing to byHost");
+	    		queueMode = QUEUE_MODE_HOST;
+	    	}
+	    	LOG.info("Using queue mode : "+queueMode);
+	
+	    	this.crawlDelay = (long) (conf.getFloat("fetcher.server.delay", 1.0f) * 1000);
+	    	this.minCrawlDelay = (long) (conf.getFloat("fetcher.server.min.delay", 0.0f) * 1000);
+	    	this.timelimit = conf.getLong("fetcher.timelimit", -1);
+	    	this.maxExceptionsPerQueue = conf.getInt("fetcher.max.exceptions.per.queue", -1);
+	    }
 
-    public static final String QUEUE_MODE_HOST = "byHost";
-    public static final String QUEUE_MODE_DOMAIN = "byDomain";
-    public static final String QUEUE_MODE_IP = "byIP";
+	    public int getTotalSize() 
+	    {
+	    	return totalSize.get();
+	    }
+	
+	    public int getQueueCount() 
+	    {
+	    	return queues.size();
+	    }
+	
+	    public void addFetchItem(Text url, CrawlDatum datum) 
+	    {
+	    	FetchItem it = FetchItem.create(url, datum, queueMode);
+	    	if (it != null) addFetchItem(it);
+	    }
 
-    String queueMode;
+	    public synchronized void addFetchItem(FetchItem it) 
+	    {
+	    	FetchItemQueue fiq = getFetchItemQueue(it.queueID);
+	    	fiq.addFetchItem(it);
+	    	totalSize.incrementAndGet();
+	    }
+	
+	    public void finishFetchItem(FetchItem it) 
+	    {
+	    	finishFetchItem(it, false);
+	    }
+	
+	    public void finishFetchItem(FetchItem it, boolean asap) 
+	    {
+	    	FetchItemQueue fiq = queues.get(it.queueID);
+	    	if (fiq == null) 
+	    	{
+	    		LOG.warn("Attempting to finish item from unknown queue: " + it);
+	    		return;
+	    	}
+	    	fiq.finishFetchItem(it, asap);
+	    }
 
-    public FetchItemQueues(Configuration conf) {
-      this.conf = conf;
-      this.maxThreads = conf.getInt("fetcher.threads.per.queue", 1);
-      queueMode = conf.get("fetcher.queue.mode", QUEUE_MODE_HOST);
-      // check that the mode is known
-      if (!queueMode.equals(QUEUE_MODE_IP) && !queueMode.equals(QUEUE_MODE_DOMAIN)
-          && !queueMode.equals(QUEUE_MODE_HOST)) {
-        LOG.error("Unknown partition mode : " + queueMode + " - forcing to byHost");
-        queueMode = QUEUE_MODE_HOST;
-      }
-      LOG.info("Using queue mode : "+queueMode);
+	    public synchronized FetchItemQueue getFetchItemQueue(String id) 
+	    {
+	    	FetchItemQueue fiq = queues.get(id);
+	    	if (fiq == null) 
+	    	{
+		        // initialize queue
+		        fiq = new FetchItemQueue(conf, maxThreads, crawlDelay, minCrawlDelay);
+		        queues.put(id, fiq);
+	    	}
+	    	return fiq;
+	    }
 
-      this.crawlDelay = (long) (conf.getFloat("fetcher.server.delay", 1.0f) * 1000);
-      this.minCrawlDelay = (long) (conf.getFloat("fetcher.server.min.delay", 0.0f) * 1000);
-      this.timelimit = conf.getLong("fetcher.timelimit", -1);
-      this.maxExceptionsPerQueue = conf.getInt("fetcher.max.exceptions.per.queue", -1);
-    }
+	    public synchronized FetchItem getFetchItem() 
+	    {
+	    	Iterator<Map.Entry<String, FetchItemQueue>> it = queues.entrySet().iterator();
+	    	while (it.hasNext()) 
+	    	{
+		        FetchItemQueue fiq = it.next().getValue();
+		        // reap empty queues
+		        if (fiq.getQueueSize() == 0 && fiq.getInProgressSize() == 0) 
+		        {
+		        	it.remove();
+		        	continue;
+		        }
+		        FetchItem fit = fiq.getFetchItem();
+		        if (fit != null) 
+		        {
+		        	totalSize.decrementAndGet();
+		        	return fit;
+		        }
+	    	}
+	    	return null;
+	    }
 
-    public int getTotalSize() {
-      return totalSize.get();
-    }
+	    // called only once the feeder has stopped
+	    public synchronized int checkTimelimit() 
+	    {
+	    	int count = 0;
+	
+	    	if (System.currentTimeMillis() >= timelimit && timelimit != -1) 
+	    	{
+		        // emptying the queues
+		        count = emptyQueues();
+		
+		        // there might also be a case where totalsize !=0 but number of queues == 0
+		        // in which case we simply force it to 0 to avoid blocking
+		        if (totalSize.get() != 0 && queues.size() == 0) 
+		        {
+		        	totalSize.set(0);
+		        }
+	    	}
+	    	return count;
+	    }
 
-    public int getQueueCount() {
-      return queues.size();
-    }
+	    // empties the queues (used by timebomb and throughput threshold)
+	    public synchronized int emptyQueues() 
+	    {
+	    	int count = 0;
+	
+	    	for (String id : queues.keySet()) 
+	    	{
+		        FetchItemQueue fiq = queues.get(id);
+		        if (fiq.getQueueSize() == 0) 
+		        {
+		        	continue;
+		        }
+		        LOG.info("* queue: " + id + " >> dropping! ");
+		        int deleted = fiq.emptyQueue();
+		        for (int i = 0; i < deleted; i++) 
+		        {
+		        	totalSize.decrementAndGet();
+		        }
+		        count += deleted;
+	    	}
+	
+	    	return count;
+	    }
 
-    public void addFetchItem(Text url, CrawlDatum datum) {
-      FetchItem it = FetchItem.create(url, datum, queueMode);
-      if (it != null) addFetchItem(it);
-    }
+	    /**
+	     * Increment the exception counter of a queue in case of an exception e.g.
+	     * timeout; when higher than a given threshold simply empty the queue.
+	     *
+	     * @param queueid
+	     * @return number of purged items
+	     */
+	    public synchronized int checkExceptionThreshold(String queueid) 
+	    {
+	    	FetchItemQueue fiq = queues.get(queueid);
+	    	if (fiq == null) 
+	    	{
+	    		return 0;
+	    	}
+	    	if (fiq.getQueueSize() == 0) 
+	    	{
+	    		return 0;
+	    	}
+	    	int excCount = fiq.incrementExceptionCounter();
+	    	if (maxExceptionsPerQueue!= -1 && excCount >= maxExceptionsPerQueue) 
+	    	{
+		        // too many exceptions for items in this queue - purge it
+		        int deleted = fiq.emptyQueue();
+		        LOG.info("* queue: " + queueid + " >> removed " + deleted
+		        		+ " URLs from queue because " + excCount + " exceptions occurred");
+		        for (int i = 0; i < deleted; i++) 
+		        {
+		        	totalSize.decrementAndGet();
+		        }
+		        return deleted;
+	    	}
+	    	return 0;
+	    }
 
-    public synchronized void addFetchItem(FetchItem it) {
-      FetchItemQueue fiq = getFetchItemQueue(it.queueID);
-      fiq.addFetchItem(it);
-      totalSize.incrementAndGet();
-    }
+	    public synchronized void dump() 
+	    {
+	    	for (String id : queues.keySet()) 
+	    	{
+		        FetchItemQueue fiq = queues.get(id);
+		        if (fiq.getQueueSize() == 0) continue;
+		        LOG.info("* queue: " + id);
+		        fiq.dump();
+	    	}
+	    }
+	}
 
-    public void finishFetchItem(FetchItem it) {
-      finishFetchItem(it, false);
-    }
+	/**
+	 * This class feeds the queues with input items, and re-fills them as
+	 * items are consumed by FetcherThread-s.
+	 */
+	private static class QueueFeeder extends Thread 
+	{
+	    private RecordReader<Text, CrawlDatum> reader;
+	    private FetchItemQueues queues;
+	    private int size;
+	    private long timelimit = -1;
+	
+	    public QueueFeeder(RecordReader<Text, CrawlDatum> reader, FetchItemQueues queues, int size) 
+	    {
+	    	this.reader = reader;
+	    	this.queues = queues;
+	    	this.size = size;
+	    	this.setDaemon(true);
+	    	this.setName("QueueFeeder");
+	    }
+	
+	    public void setTimeLimit(long tl) 
+	    {
+	    	timelimit = tl;
+	    }
 
-    public void finishFetchItem(FetchItem it, boolean asap) {
-      FetchItemQueue fiq = queues.get(it.queueID);
-      if (fiq == null) {
-        LOG.warn("Attempting to finish item from unknown queue: " + it);
-        return;
-      }
-      fiq.finishFetchItem(it, asap);
-    }
+	    public void run() 
+	    {
+	    	boolean hasMore = true;
+	    	int cnt = 0;
+	    	int timelimitcount = 0;
+	    	while (hasMore) 
+	    	{
+	    		if (System.currentTimeMillis() >= timelimit && timelimit != -1) 
+	    		{
+	    			// enough .. lets' simply
+	    			// read all the entries from the input without processing them
+	    			try 
+	    			{
+	    				Text url = new Text();
+	    				CrawlDatum datum = new CrawlDatum();
+	    				hasMore = reader.next(url, datum);
+	    				timelimitcount++;
+	    			} 
+	    			catch (IOException e) 
+	    			{
+	    				LOG.error("QueueFeeder error reading input, record " + cnt, e);
+	    				return;
+	    			}
+	    			continue;
+	    		}
+	    		int feed = size - queues.getTotalSize();
+	    		
+	    		if (feed <= 0) 
+	    		{
+	    			// queues are full - spin-wait until they have some free space
+	    			try 
+	    			{
+	    				Thread.sleep(1000);
+	    			} 
+	    			catch (Exception e) {};
+	    			continue;
+	    		} 
+	    		else 
+	    		{
+	    			LOG.debug("-feeding " + feed + " input urls ...");
+	    			while (feed > 0 && hasMore) 
+	    			{
+			            try 
+			            {
+			            	Text url = new Text();
+			            	CrawlDatum datum = new CrawlDatum();
+			            	hasMore = reader.next(url, datum);
+			            	if (hasMore) 
+			            	{
+				                queues.addFetchItem(url, datum);
+				                cnt++;
+				                feed--;
+			            	}
+			            } 
+			            catch (IOException e) 
+			            {
+			            	LOG.error("QueueFeeder error reading input, record " + cnt, e);
+			            	return;
+			            }
+	    			}
+	    		}
+	    	}
+	    	LOG.info("QueueFeeder finished: total " + cnt + " records + hit by time limit :" + timelimitcount);
+	    }
+	}
 
-    public synchronized FetchItemQueue getFetchItemQueue(String id) {
-      FetchItemQueue fiq = queues.get(id);
-      if (fiq == null) {
-        // initialize queue
-        fiq = new FetchItemQueue(conf, maxThreads, crawlDelay, minCrawlDelay);
-        queues.put(id, fiq);
-      }
-      return fiq;
-    }
-
-    public synchronized FetchItem getFetchItem() {
-      Iterator<Map.Entry<String, FetchItemQueue>> it =
-        queues.entrySet().iterator();
-      while (it.hasNext()) {
-        FetchItemQueue fiq = it.next().getValue();
-        // reap empty queues
-        if (fiq.getQueueSize() == 0 && fiq.getInProgressSize() == 0) {
-          it.remove();
-          continue;
-        }
-        FetchItem fit = fiq.getFetchItem();
-        if (fit != null) {
-          totalSize.decrementAndGet();
-          return fit;
-        }
-      }
-      return null;
-    }
-
-    // called only once the feeder has stopped
-    public synchronized int checkTimelimit() {
-      int count = 0;
-
-      if (System.currentTimeMillis() >= timelimit && timelimit != -1) {
-        // emptying the queues
-        count = emptyQueues();
-
-        // there might also be a case where totalsize !=0 but number of queues
-        // == 0
-        // in which case we simply force it to 0 to avoid blocking
-        if (totalSize.get() != 0 && queues.size() == 0) totalSize.set(0);
-      }
-      return count;
-    }
-
-    // empties the queues (used by timebomb and throughput threshold)
-    public synchronized int emptyQueues() {
-      int count = 0;
-
-      for (String id : queues.keySet()) {
-        FetchItemQueue fiq = queues.get(id);
-        if (fiq.getQueueSize() == 0) continue;
-        LOG.info("* queue: " + id + " >> dropping! ");
-        int deleted = fiq.emptyQueue();
-        for (int i = 0; i < deleted; i++) {
-          totalSize.decrementAndGet();
-        }
-        count += deleted;
-      }
-
-      return count;
-    }
-
-    /**
-     * Increment the exception counter of a queue in case of an exception e.g.
-     * timeout; when higher than a given threshold simply empty the queue.
-     *
-     * @param queueid
-     * @return number of purged items
-     */
-    public synchronized int checkExceptionThreshold(String queueid) {
-      FetchItemQueue fiq = queues.get(queueid);
-      if (fiq == null) {
-        return 0;
-      }
-      if (fiq.getQueueSize() == 0) {
-        return 0;
-      }
-      int excCount = fiq.incrementExceptionCounter();
-      if (maxExceptionsPerQueue!= -1 && excCount >= maxExceptionsPerQueue) {
-        // too many exceptions for items in this queue - purge it
-        int deleted = fiq.emptyQueue();
-        LOG.info("* queue: " + queueid + " >> removed " + deleted
-            + " URLs from queue because " + excCount + " exceptions occurred");
-        for (int i = 0; i < deleted; i++) {
-          totalSize.decrementAndGet();
-        }
-        return deleted;
-      }
-      return 0;
-    }
-
-
-    public synchronized void dump() {
-      for (String id : queues.keySet()) {
-        FetchItemQueue fiq = queues.get(id);
-        if (fiq.getQueueSize() == 0) continue;
-        LOG.info("* queue: " + id);
-        fiq.dump();
-      }
-    }
-  }
-
-  /**
-   * This class feeds the queues with input items, and re-fills them as
-   * items are consumed by FetcherThread-s.
-   */
-  private static class QueueFeeder extends Thread {
-    private RecordReader<Text, CrawlDatum> reader;
-    private FetchItemQueues queues;
-    private int size;
-    private long timelimit = -1;
-
-    public QueueFeeder(RecordReader<Text, CrawlDatum> reader,
-        FetchItemQueues queues, int size) {
-      this.reader = reader;
-      this.queues = queues;
-      this.size = size;
-      this.setDaemon(true);
-      this.setName("QueueFeeder");
-    }
-
-    public void setTimeLimit(long tl) {
-      timelimit = tl;
-    }
-
-    public void run() {
-      boolean hasMore = true;
-      int cnt = 0;
-      int timelimitcount = 0;
-      while (hasMore) {
-        if (System.currentTimeMillis() >= timelimit && timelimit != -1) {
-          // enough .. lets' simply
-          // read all the entries from the input without processing them
-          try {
-            Text url = new Text();
-            CrawlDatum datum = new CrawlDatum();
-            hasMore = reader.next(url, datum);
-            timelimitcount++;
-          } catch (IOException e) {
-            LOG.error("QueueFeeder error reading input, record " + cnt, e);
-            return;
-          }
-          continue;
-        }
-        int feed = size - queues.getTotalSize();
-        if (feed <= 0) {
-          // queues are full - spin-wait until they have some free space
-          try {
-            Thread.sleep(1000);
-          } catch (Exception e) {};
-          continue;
-        } else {
-          LOG.debug("-feeding " + feed + " input urls ...");
-          while (feed > 0 && hasMore) {
-            try {
-              Text url = new Text();
-              CrawlDatum datum = new CrawlDatum();
-              hasMore = reader.next(url, datum);
-              if (hasMore) {
-                queues.addFetchItem(url, datum);
-                cnt++;
-                feed--;
-              }
-            } catch (IOException e) {
-              LOG.error("QueueFeeder error reading input, record " + cnt, e);
-              return;
-            }
-          }
-        }
-      }
-      LOG.info("QueueFeeder finished: total " + cnt + " records + hit by time limit :"
-          + timelimitcount);
-    }
-  }
-
-  /**
-   * This class picks items from queues and fetches the pages.
-   */
-  private class FetcherThread extends Thread {
-    private Configuration conf;
-    private URLFilters urlFilters;
-    private ScoringFilters scfilters;
-    private ParseUtil parseUtil;
-    private URLNormalizers normalizers;
-    private ProtocolFactory protocolFactory;
-    private long maxCrawlDelay;
-    private String queueMode;
-    private int maxRedirect;
-    private String reprUrl;
-    private boolean redirecting;
-    private int redirectCount;
-    private boolean ignoreExternalLinks;
-
-    // Used by fetcher.follow.outlinks.depth in parse
-    private int maxOutlinksPerPage;
-    private final int maxOutlinks;
-    private final int interval;
-    private int maxOutlinkDepth;
-    private int maxOutlinkDepthNumLinks;
-    private boolean outlinksIgnoreExternal;
-
-    private int outlinksDepthDivisor;
-    private boolean skipTruncated;
+	/**
+	 * This class picks items from queues and fetches the pages.
+	 */
+	private class FetcherThread extends Thread 
+	{
+	    private Configuration conf;
+	    private URLFilters urlFilters;
+	    private ScoringFilters scfilters;
+	    private ParseUtil parseUtil;
+	    private URLNormalizers normalizers;
+	    private ProtocolFactory protocolFactory;
+	    private long maxCrawlDelay;
+	    private String queueMode;
+	    private int maxRedirect;
+	    private String reprUrl;
+	    private boolean redirecting;
+	    private int redirectCount;
+	    private boolean ignoreExternalLinks;
+	
+	    // Used by fetcher.follow.outlinks.depth in parse
+	    private int maxOutlinksPerPage;
+	    private final int maxOutlinks;
+	    private final int interval;
+	    private int maxOutlinkDepth;
+	    private int maxOutlinkDepthNumLinks;
+	    private boolean outlinksIgnoreExternal;
+	
+	    private int outlinksDepthDivisor;
+	    private boolean skipTruncated;
 
     public FetcherThread(Configuration conf) {
       this.setDaemon(true);                       // don't hang JVM on exit

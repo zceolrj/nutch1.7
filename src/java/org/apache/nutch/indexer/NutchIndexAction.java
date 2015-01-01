@@ -28,28 +28,31 @@ import org.apache.nutch.indexer.NutchDocument;
  * A {@link NutchIndexAction} is the new unit of indexing holding the
  * document and action information.
  */
-public class NutchIndexAction implements Writable {
+public class NutchIndexAction implements Writable 
+{
+	public static final byte ADD = 0;
+	public static final byte DELETE = 1;
+	public static final byte UPDATE = 2;
 
-  public static final byte ADD = 0;
-  public static final byte DELETE = 1;
-  public static final byte UPDATE = 2;
+	public NutchDocument doc = null;
+	public byte action = ADD;
 
-  public NutchDocument doc = null;
-  public byte action = ADD;
+	public NutchIndexAction(NutchDocument doc, byte action) 
+	{
+	    this.doc = doc;
+	    this.action = action;
+	}
 
-  public NutchIndexAction(NutchDocument doc, byte action) {
-    this.doc = doc;
-    this.action = action;
-  }
+	public void readFields(DataInput in) throws IOException 
+	{
+	    action = in.readByte();
+	    doc = new NutchDocument();
+	    doc.readFields(in);
+	}
 
-  public void readFields(DataInput in) throws IOException {
-    action = in.readByte();
-    doc = new NutchDocument();
-    doc.readFields(in);
-  }
-
-  public void write(DataOutput out) throws IOException {
-    out.write(action);
-    doc.write(out);
-  }
+	public void write(DataOutput out) throws IOException 
+	{
+	    out.write(action);
+	    doc.write(out);
+	}
 }

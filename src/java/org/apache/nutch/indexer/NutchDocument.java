@@ -32,99 +32,118 @@ import org.apache.hadoop.io.WritableUtils;
 import org.apache.nutch.metadata.Metadata;
 
 /** A {@link NutchDocument} is the unit of indexing.*/
-public class NutchDocument
-implements Writable, Iterable<Entry<String, NutchField>> {
-
-  public static final byte VERSION = 2;
+public class NutchDocument implements Writable, Iterable<Entry<String, NutchField>> 
+{
+	public static final byte VERSION = 2;
   
-  private Map<String, NutchField> fields;
+	private Map<String, NutchField> fields;
 
-  private Metadata documentMeta;
+	private Metadata documentMeta;
 
-  private float weight;
+	private float weight;
 
-  public NutchDocument() {
-    fields = new HashMap<String, NutchField>();
-    documentMeta = new Metadata();
-    weight = 1.0f;
-  }
+	public NutchDocument() 
+	{
+	    fields = new HashMap<String, NutchField>();
+	    documentMeta = new Metadata();
+	    weight = 1.0f;
+	}
 
-  public void add(String name, Object value) {
-    NutchField field = fields.get(name);
-    if (field == null) {
-      field = new NutchField(value);
-      fields.put(name, field);
-    } else {
-      field.add(value);
-    }
-  }
+	public void add(String name, Object value) 
+	{
+	    NutchField field = fields.get(name);
+	    if (field == null) 
+	    {
+	    	field = new NutchField(value);
+	    	fields.put(name, field);
+	    } 
+	    else 
+	    {
+	    	field.add(value);
+	    }
+	}
 
-  public Object getFieldValue(String name) {
-    NutchField field = fields.get(name);
-    if (field == null) {
-      return null;
-    }
-    if (field.getValues().size() == 0) {
-      return null;
-    }
-    return field.getValues().get(0);
-  }
+	public Object getFieldValue(String name) 
+	{
+	    NutchField field = fields.get(name);
+	    if (field == null) 
+	    {
+	    	return null;
+	    }
+	    if (field.getValues().size() == 0) 
+	    {
+	    	return null;
+	    }
+	    return field.getValues().get(0);
+	}
 
-  public NutchField getField(String name) {
-    return fields.get(name);
-  }
+	public NutchField getField(String name) 
+	{
+		return fields.get(name);
+	}
 
-  public NutchField removeField(String name) {
-    return fields.remove(name);
-  }
+	public NutchField removeField(String name) 
+	{
+		return fields.remove(name);
+	}
 
-  public Collection<String> getFieldNames() {
-    return fields.keySet();
-  }
+	public Collection<String> getFieldNames() 
+	{
+		return fields.keySet();
+	}
 
-  /** Iterate over all fields. */
-  public Iterator<Entry<String, NutchField>> iterator() {
-    return fields.entrySet().iterator();
-  }
+	/** Iterate over all fields. */
+	public Iterator<Entry<String, NutchField>> iterator() 
+	{
+		return fields.entrySet().iterator();
+	}
 
-  public float getWeight() {
-    return weight;
-  }
+	public float getWeight() 
+	{
+		return weight;
+	}
 
-  public void setWeight(float weight) {
-    this.weight = weight;
-  }
+	public void setWeight(float weight) 
+	{
+		this.weight = weight;
+	}
 
-  public Metadata getDocumentMeta() {
-    return documentMeta;
-  }
+	public Metadata getDocumentMeta() 
+	{
+		return documentMeta;
+	}
 
-  public void readFields(DataInput in) throws IOException {
-    fields.clear();
-    byte version = in.readByte();
-    if (version != VERSION) {
-      throw new VersionMismatchException(VERSION, version);
-    }
-    int size = WritableUtils.readVInt(in);
-    for (int i = 0; i < size; i++) {
-      String name = Text.readString(in);
-      NutchField field = new NutchField();
-      field.readFields(in);
-      fields.put(name, field);
-    }
-    weight = in.readFloat();
-    documentMeta.readFields(in);
-  }
+	public void readFields(DataInput in) throws IOException 
+	{
+	    fields.clear();
+	    byte version = in.readByte();
+	    if (version != VERSION) 
+	    {
+	    	throw new VersionMismatchException(VERSION, version);
+	    }
+	    int size = WritableUtils.readVInt(in);
+	    for (int i = 0; i < size; i++) 
+	    {
+	    	String name = Text.readString(in);
+	    	NutchField field = new NutchField();
+	    	field.readFields(in);
+	    	fields.put(name, field);
+	    }
+	    weight = in.readFloat();
+	    documentMeta.readFields(in);
+	}
 
-  public void write(DataOutput out) throws IOException {
-    out.writeByte(VERSION);
-    WritableUtils.writeVInt(out, fields.size());
-    for (Map.Entry<String, NutchField> entry : fields.entrySet()) {
-      Text.writeString(out, entry.getKey());
-      NutchField field = entry.getValue();
-      field.write(out);
-    }
-    out.writeFloat(weight);
-    documentMeta.write(out);
-  }
+	public void write(DataOutput out) throws IOException 
+	{
+	    out.writeByte(VERSION);
+	    WritableUtils.writeVInt(out, fields.size());
+	    for (Map.Entry<String, NutchField> entry : fields.entrySet()) 
+	    {
+	    	Text.writeString(out, entry.getKey());
+	    	NutchField field = entry.getValue();
+	    	field.write(out);
+	    }
+	    out.writeFloat(weight);
+	    documentMeta.write(out);
+	}
 }
