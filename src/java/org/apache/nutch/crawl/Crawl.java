@@ -49,7 +49,6 @@ public class Crawl extends Configured implements Tool
 	    return new SimpleDateFormat("yyyyMMddHHmmss").format(new Date(System.currentTimeMillis()));
 	}
 
-
 	/* Perform complete crawling and indexing (to Solr) given a set of root urls and the -solr
 	   parameter respectively. More information and Usage parameters can be found below. */
 	public static void main(String args[]) throws Exception 
@@ -157,7 +156,7 @@ public class Crawl extends Configured implements Tool
 	        if (segs == null) 
 	        {
 	            LOG.info("Stopping at depth=" + i + " - no more URLs to fetch.");
-	          break;
+	            break;
 	        }
 	        fetcher.fetch(segs[0], threads);  // fetch it
 	        if (!Fetcher.isParsing(job)) 

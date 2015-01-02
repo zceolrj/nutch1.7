@@ -45,47 +45,47 @@ import org.slf4j.LoggerFactory;
  * Generic indexer which relies on the plugins implementing IndexWriter
  **/
 
-public class IndexingJob extends Configured implements Tool {
-
+public class IndexingJob extends Configured implements Tool 
+{
     public static Logger LOG = LoggerFactory.getLogger(IndexingJob.class);
 
-    public IndexingJob() {
+    public IndexingJob() 
+    {
         super(null);
     }
 
-    public IndexingJob(Configuration conf) {
+    public IndexingJob(Configuration conf) 
+    {
         super(conf);
     }
 
-    public void index(Path crawlDb, Path linkDb, List<Path> segments)
-            throws IOException {
+    public void index(Path crawlDb, Path linkDb, List<Path> segments) throws IOException 
+    {
         // SOLR SPECIFIC COMMIT PARAM USED BY CRAWL CLASS
-        boolean noCommit = !getConf().getBoolean(SolrConstants.COMMIT_INDEX,
-                true);
+        boolean noCommit = !getConf().getBoolean(SolrConstants.COMMIT_INDEX, true);
         index(crawlDb, linkDb, segments, noCommit, false, null);
     }
 
-    public void index(Path crawlDb, Path linkDb, List<Path> segments,
-            boolean noCommit) throws IOException {
+    public void index(Path crawlDb, Path linkDb, List<Path> segments, boolean noCommit) throws IOException 
+    {
         index(crawlDb, linkDb, segments, noCommit, false, null);
     }
 
-    public void index(Path crawlDb, Path linkDb, List<Path> segments,
-            boolean noCommit, boolean deleteGone) throws IOException {
+    public void index(Path crawlDb, Path linkDb, List<Path> segments, boolean noCommit, boolean deleteGone) 
+    				throws IOException 
+    {
         index(crawlDb, linkDb, segments, noCommit, deleteGone, null);
     }
 
     public void index(Path crawlDb, Path linkDb, List<Path> segments,
-            boolean noCommit, boolean deleteGone, String params)
-            throws IOException {
-        index(crawlDb, linkDb, segments, noCommit, deleteGone, params, false,
-                false);
+            		boolean noCommit, boolean deleteGone, String params) throws IOException 
+    {
+        index(crawlDb, linkDb, segments, noCommit, deleteGone, params, false, false);
     }
 
-    public void index(Path crawlDb, Path linkDb, List<Path> segments,
-            boolean noCommit, boolean deleteGone, String params,
-            boolean filter, boolean normalize) throws IOException {
-
+    public void index(Path crawlDb, Path linkDb, List<Path> segments, boolean noCommit, boolean deleteGone, 
+    				String params, boolean filter, boolean normalize) throws IOException 
+    {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         long start = System.currentTimeMillis();
         LOG.info("Indexer: starting at " + sdf.format(start));
@@ -109,35 +109,39 @@ public class IndexingJob extends Configured implements Tool {
         job.setBoolean(IndexerMapReduce.URL_FILTERING, filter);
         job.setBoolean(IndexerMapReduce.URL_NORMALIZING, normalize);
 
-        if (params != null) {
+        if (params != null) 
+        {
             job.set(IndexerMapReduce.INDEXER_PARAMS, params);
         }
 
         job.setReduceSpeculativeExecution(false);
 
-        final Path tmp = new Path("tmp_" + System.currentTimeMillis() + "-"
-                + new Random().nextInt());
+        final Path tmp = new Path("tmp_" + System.currentTimeMillis() + "-" + new Random().nextInt());
 
         FileOutputFormat.setOutputPath(job, tmp);
-        try {
+        try 
+        {
             JobClient.runJob(job);
             // do the commits once and for all the reducers in one go
-            if (!noCommit) {
+            if (!noCommit) 
+            {
                 writers.open(job,"commit");
                 writers.commit();
             }
             long end = System.currentTimeMillis();
-            LOG.info("Indexer: finished at " + sdf.format(end) + ", elapsed: "
-                    + TimingUtil.elapsedTime(start, end));
-        } finally {
+            LOG.info("Indexer: finished at " + sdf.format(end) + ", elapsed: " + TimingUtil.elapsedTime(start, end));
+        } 
+        finally 
+        {
             FileSystem.get(job).delete(tmp, true);
         }
     }
 
-    public int run(String[] args) throws Exception {
-        if (args.length < 2) {
-            System.err
-                    .println("Usage: Indexer <crawldb> [-linkdb <linkdb>] [-params k1=v1&k2=v2...] (<segment> ... | -dir <segments>) [-noCommit] [-deleteGone] [-filter] [-normalize]");
+    public int run(String[] args) throws Exception 
+    {
+        if (args.length < 2) 
+        {
+            System.err.println("Usage: Indexer <crawldb> [-linkdb <linkdb>] [-params k1=v1&k2=v2...] (<segment> ... | -dir <segments>) [-noCommit] [-deleteGone] [-filter] [-normalize]");
             IndexWriters writers = new IndexWriters(getConf());
             System.err.println(writers.describe());
             return -1;
@@ -154,46 +158,64 @@ public class IndexingJob extends Configured implements Tool {
         boolean filter = false;
         boolean normalize = false;
 
-        for (int i = 1; i < args.length; i++) {
-            if (args[i].equals("-linkdb")) {
+        for (int i = 1; i < args.length; i++) 
+        {
+            if (args[i].equals("-linkdb")) 
+            {
                 linkDb = new Path(args[++i]);
-            } else if (args[i].equals("-dir")) {
+            } 
+            else if (args[i].equals("-dir")) 
+            {
                 Path dir = new Path(args[++i]);
                 FileSystem fs = dir.getFileSystem(getConf());
-                FileStatus[] fstats = fs.listStatus(dir,
-                        HadoopFSUtil.getPassDirectoriesFilter(fs));
+                FileStatus[] fstats = fs.listStatus(dir, HadoopFSUtil.getPassDirectoriesFilter(fs));
                 Path[] files = HadoopFSUtil.getPaths(fstats);
-                for (Path p : files) {
+                for (Path p : files) 
+                {
                     segments.add(p);
                 }
-            } else if (args[i].equals("-noCommit")) {
+            } 
+            else if (args[i].equals("-noCommit")) 
+            {
                 noCommit = true;
-            } else if (args[i].equals("-deleteGone")) {
+            } 
+            else if (args[i].equals("-deleteGone")) 
+            {
                 deleteGone = true;
-            } else if (args[i].equals("-filter")) {
+            } 
+            else if (args[i].equals("-filter")) 
+            {
                 filter = true;
-            } else if (args[i].equals("-normalize")) {
+            } 
+            else if (args[i].equals("-normalize")) 
+            {
                 normalize = true;
-            } else if (args[i].equals("-params")) {
+            } 
+            else if (args[i].equals("-params")) 
+            {
                 params = args[++i];
-            } else {
+            } 
+            else 
+            {
                 segments.add(new Path(args[i]));
             }
         }
 
-        try {
-            index(crawlDb, linkDb, segments, noCommit, deleteGone, params,
-                    filter, normalize);
+        try 
+        {
+            index(crawlDb, linkDb, segments, noCommit, deleteGone, params, filter, normalize);
             return 0;
-        } catch (final Exception e) {
+        } 
+        catch (final Exception e) 
+        {
             LOG.error("Indexer: " + StringUtils.stringifyException(e));
             return -1;
         }
     }
 
-    public static void main(String[] args) throws Exception {
-        final int res = ToolRunner.run(NutchConfiguration.create(),
-                new IndexingJob(), args);
+    public static void main(String[] args) throws Exception 
+    {
+        final int res = ToolRunner.run(NutchConfiguration.create(), new IndexingJob(), args);
         System.exit(res);
     }
 }
