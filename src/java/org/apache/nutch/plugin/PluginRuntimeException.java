@@ -22,15 +22,17 @@ package org.apache.nutch.plugin;
  * 
  * @author joa23
  */
-public class PluginRuntimeException extends Exception {
+public class PluginRuntimeException extends Exception 
+{
+	private static final long serialVersionUID = 1L;
 
-  private static final long serialVersionUID = 1L;
+	public PluginRuntimeException(Throwable cause) 
+	{
+		super(cause);
+	}
 
-  public PluginRuntimeException(Throwable cause) {
-    super(cause);
-  }
-
-  public PluginRuntimeException(String message) {
-    super(message);
-  }
+	public PluginRuntimeException(String message) 
+	{
+		super(message);
+	}
 }

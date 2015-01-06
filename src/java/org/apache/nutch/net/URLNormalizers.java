@@ -270,26 +270,33 @@ public final class URLNormalizers {
     return res;
   }
 
-  /**
-   * Normalize
-   * @param urlString The URL string to normalize.
-   * @param scope The given scope.
-   * @return A normalized String, using the given <code>scope</code>
-   * @throws MalformedURLException If the given URL string is malformed.
-   */
-  public String normalize(String urlString, String scope)
-          throws MalformedURLException {
-    // optionally loop several times, and break if no further changes
-    String initialString = urlString;
-    for (int k = 0; k < loopCount; k++) {
-      for (int i = 0; i < this.normalizers.length; i++) {
-        if (urlString == null)
-          return null;
-        urlString = this.normalizers[i].normalize(urlString, scope);
-      }
-      if (initialString.equals(urlString)) break;
-      initialString = urlString;
-    }
-    return urlString;
-  }
+  	/**
+  	 * Normalize
+  	 * @param urlString The URL string to normalize.
+  	 * @param scope The given scope.
+  	 * @return A normalized String, using the given <code>scope</code>
+  	 * @throws MalformedURLException If the given URL string is malformed.
+  	 */
+  	public String normalize(String urlString, String scope) throws MalformedURLException 
+  	{
+	    // optionally loop several times, and break if no further changes
+	    String initialString = urlString;
+	    for (int k = 0; k < loopCount; k++) 
+	    {
+	    	for (int i = 0; i < this.normalizers.length; i++) 
+	    	{
+		        if (urlString == null)
+		        {
+		        	return null;
+		        }
+		        urlString = this.normalizers[i].normalize(urlString, scope);
+	    	}
+	    	if (initialString.equals(urlString)) 
+	    	{
+	    		break;
+	    	}
+	    	initialString = urlString;
+	    }
+	    return urlString;
+  	}
 }
