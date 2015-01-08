@@ -23,36 +23,40 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 
-public class ObjectCache {
+public class ObjectCache 
+{  
+	private static final Logger LOG = LoggerFactory.getLogger(ObjectCache.class);
   
-  private static final Logger LOG = LoggerFactory.getLogger(ObjectCache.class);
-  
-  private static final WeakHashMap<Configuration, ObjectCache> CACHE = 
-    new WeakHashMap<Configuration, ObjectCache>();
+	private static final WeakHashMap<Configuration, ObjectCache> CACHE = 
+							new WeakHashMap<Configuration, ObjectCache>();
 
-  private final HashMap<String, Object> objectMap;
+	private final HashMap<String, Object> objectMap;
   
-  private ObjectCache() {
-    objectMap = new HashMap<String, Object>();
-  }
+	private ObjectCache() 
+	{
+		objectMap = new HashMap<String, Object>();
+	}
   
-  public static ObjectCache get(Configuration conf) {
-    ObjectCache objectCache = CACHE.get(conf);
-    if (objectCache == null) {
-      LOG.debug("No object cache found for conf=" + conf 
-                  + ", instantiating a new object cache");
-      objectCache = new ObjectCache();
-      CACHE.put(conf, objectCache);
-    }
-    return objectCache;
-  }
+	public static ObjectCache get(Configuration conf) 
+	{
+	    ObjectCache objectCache = CACHE.get(conf);
+	    if (objectCache == null) 
+	    {
+	    	LOG.debug("No object cache found for conf=" + conf + ", instantiating a new object cache");
+	    	objectCache = new ObjectCache();
+	    	CACHE.put(conf, objectCache);
+	    }
+	    return objectCache;
+	}
   
-  public Object getObject(String key) {
-    return objectMap.get(key);
-  }
+	public Object getObject(String key) 
+	{
+		return objectMap.get(key);
+	}
   
-  public void setObject(String key, Object value) {
-    objectMap.put(key, value);
-  }
+	public void setObject(String key, Object value) 
+	{
+		objectMap.put(key, value);
+	}
 }
 

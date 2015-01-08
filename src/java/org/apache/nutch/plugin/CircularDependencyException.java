@@ -23,15 +23,17 @@ package org.apache.nutch.plugin;
  * 
  * @author J&eacute;r&ocirc;me Charron
  */
-public class CircularDependencyException extends Exception {
+public class CircularDependencyException extends Exception 
+{
+	private static final long serialVersionUID = 1L;
 
-  private static final long serialVersionUID = 1L;
+	public CircularDependencyException(Throwable cause) 
+	{
+		super(cause);
+	}
 
-  public CircularDependencyException(Throwable cause) {
-    super(cause);
-  }
-
-  public CircularDependencyException(String message) {
-    super(message);
-  }
+	public CircularDependencyException(String message) 
+	{
+		super(message);
+	}
 }

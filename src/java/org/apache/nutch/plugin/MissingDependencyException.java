@@ -22,15 +22,17 @@ package org.apache.nutch.plugin;
  * 
  * @author J&eacute;r&ocirc;me Charron
  */
-public class MissingDependencyException extends Exception {
+public class MissingDependencyException extends Exception 
+{
+	private static final long serialVersionUID = 1L;
 
-  private static final long serialVersionUID = 1L;
+	public MissingDependencyException(Throwable cause) 
+	{
+		super(cause);
+	}
 
-  public MissingDependencyException(Throwable cause) {
-    super(cause);
-  }
-
-  public MissingDependencyException(String message) {
-    super(message);
-  }
+	public MissingDependencyException(String message) 
+	{
+		super(message);
+	}
 }

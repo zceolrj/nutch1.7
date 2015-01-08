@@ -73,202 +73,222 @@ import org.apache.nutch.util.ObjectCache;
  * 
  * @author Andrzej Bialecki
  */
-public final class URLNormalizers {
+public final class URLNormalizers 
+{  
+	/** Default scope. If no scope properties are defined then the configuration for
+	 * this scope will be used.
+	 */
+	public static final String SCOPE_DEFAULT = "default";
+	/** Scope used by {@link org.apache.nutch.crawl.URLPartitioner}. */
+	public static final String SCOPE_PARTITION = "partition";
+	/** Scope used by {@link org.apache.nutch.crawl.Generator}. */
+	public static final String SCOPE_GENERATE_HOST_COUNT = "generate_host_count";
+	/** Scope used by {@link org.apache.nutch.fetcher.Fetcher} when processing
+	 * redirect URLs.
+	 */
+	public static final String SCOPE_FETCHER = "fetcher";
+	/** Scope used when updating the CrawlDb with new URLs. */
+	public static final String SCOPE_CRAWLDB = "crawldb";
+	/** Scope used when updating the LinkDb with new URLs. */
+	public static final String SCOPE_LINKDB = "linkdb";
+	/** Scope used by {@link org.apache.nutch.crawl.Injector}. */
+	public static final String SCOPE_INJECT = "inject";
+	/** Scope used when constructing new {@link org.apache.nutch.parse.Outlink} instances. */
+	public static final String SCOPE_OUTLINK = "outlink";
+	/** Scope used when indexing URLs. */
+	public static final String SCOPE_INDEXER = "indexer";
+
+	public static final Logger LOG = LoggerFactory.getLogger(URLNormalizers.class);
+
+	/* Empty extension list for caching purposes. */
+	private final List<Extension> EMPTY_EXTENSION_LIST = Collections.<Extension>emptyList();
   
-  /** Default scope. If no scope properties are defined then the configuration for
-   * this scope will be used.
-   */
-  public static final String SCOPE_DEFAULT = "default";
-  /** Scope used by {@link org.apache.nutch.crawl.URLPartitioner}. */
-  public static final String SCOPE_PARTITION = "partition";
-  /** Scope used by {@link org.apache.nutch.crawl.Generator}. */
-  public static final String SCOPE_GENERATE_HOST_COUNT = "generate_host_count";
-  /** Scope used by {@link org.apache.nutch.fetcher.Fetcher} when processing
-   * redirect URLs.
-   */
-  public static final String SCOPE_FETCHER = "fetcher";
-  /** Scope used when updating the CrawlDb with new URLs. */
-  public static final String SCOPE_CRAWLDB = "crawldb";
-  /** Scope used when updating the LinkDb with new URLs. */
-  public static final String SCOPE_LINKDB = "linkdb";
-  /** Scope used by {@link org.apache.nutch.crawl.Injector}. */
-  public static final String SCOPE_INJECT = "inject";
-  /** Scope used when constructing new {@link org.apache.nutch.parse.Outlink} instances. */
-  public static final String SCOPE_OUTLINK = "outlink";
-  /** Scope used when indexing URLs. */
-  public static final String SCOPE_INDEXER = "indexer";
+	private final URLNormalizer[] EMPTY_NORMALIZERS = new URLNormalizer[0];
 
-  public static final Logger LOG = LoggerFactory.getLogger(URLNormalizers.class);
+	private Configuration conf;
 
-  /* Empty extension list for caching purposes. */
-  private final List<Extension> EMPTY_EXTENSION_LIST = Collections.<Extension>emptyList();
+	private ExtensionPoint extensionPoint;
+
+	private URLNormalizer[] normalizers;
   
-  private final URLNormalizer[] EMPTY_NORMALIZERS = new URLNormalizer[0];
+	private int loopCount;
 
-  private Configuration conf;
+	public URLNormalizers(Configuration conf, String scope) 
+	{
+	    this.conf = conf;
+	    this.extensionPoint = PluginRepository.get(conf).getExtensionPoint(URLNormalizer.X_POINT_ID);
+	    ObjectCache objectCache = ObjectCache.get(conf);
+	    
+	    if (this.extensionPoint == null) 
+	    {
+	    	throw new RuntimeException("x point " + URLNormalizer.X_POINT_ID + " not found.");
+	    }
+	
+	    normalizers = (URLNormalizer[])objectCache.getObject(URLNormalizer.X_POINT_ID + "_" + scope);
+	    if (normalizers == null) 
+	    {
+	    	normalizers = getURLNormalizers(scope);
+	    }
+	    if (normalizers == EMPTY_NORMALIZERS) 
+	    {
+	    	normalizers = (URLNormalizer[])objectCache.getObject(URLNormalizer.X_POINT_ID + "_" + SCOPE_DEFAULT);
+	    	if (normalizers == null) 
+	    	{
+	    		normalizers = getURLNormalizers(SCOPE_DEFAULT);
+	    	}
+	    }
+	    
+	    loopCount = conf.getInt("urlnormalizer.loop.count", 1);
+	}
 
-  private ExtensionPoint extensionPoint;
+	/**
+	 * Function returns an array of {@link URLNormalizer}s for a given scope,
+	 * with a specified order.
+	 * 
+	 * @param scope
+	 *          The scope to return the <code>Array</code> of
+	 *          {@link URLNormalizer}s for.
+	 * @return An <code>Array</code> of {@link URLNormalizer}s for the given
+	 *         scope.
+	 * @throws PluginRuntimeException
+	 */
+	URLNormalizer[] getURLNormalizers(String scope) 
+	{
+	    List<Extension> extensions = getExtensions(scope);
+	    ObjectCache objectCache = ObjectCache.get(conf);
+	    
+	    if (extensions == EMPTY_EXTENSION_LIST) 
+	    {
+	    	return EMPTY_NORMALIZERS;
+	    }
+	    
+	    List<URLNormalizer> normalizers = new Vector<URLNormalizer>(extensions.size());
 
-  private URLNormalizer[] normalizers;
-  
-  private int loopCount;
+	    Iterator<Extension> it = extensions.iterator();
+	    while (it.hasNext()) 
+	    {
+	    	Extension ext = it.next();
+	    	URLNormalizer normalizer = null;
+	    	try 
+	    	{
+		        // check to see if we've cached this URLNormalizer instance yet
+		        normalizer = (URLNormalizer) objectCache.getObject(ext.getId());
+		        if (normalizer == null) 
+		        {
+		        	// go ahead and instantiate it and then cache it
+		        	normalizer = (URLNormalizer) ext.getExtensionInstance();
+		        	objectCache.setObject(ext.getId(), normalizer);
+		        }
+		        normalizers.add(normalizer);
+	    	} 
+	    	catch (PluginRuntimeException e) 
+	    	{
+	    		e.printStackTrace();
+	    		LOG.warn("URLNormalizers:PluginRuntimeException when "
+	    				+ "initializing url normalizer plugin "
+	    				+ ext.getDescriptor().getPluginId()
+	    				+ " instance in getURLNormalizers "
+	    				+ "function: attempting to continue instantiating plugins");
+	    	}
+	    }
+	    return normalizers.toArray(new URLNormalizer[normalizers.size()]);
+	}
 
-  public URLNormalizers(Configuration conf, String scope) {
-    this.conf = conf;
-    this.extensionPoint = PluginRepository.get(conf).getExtensionPoint(
-            URLNormalizer.X_POINT_ID);
-    ObjectCache objectCache = ObjectCache.get(conf);
-    
-    if (this.extensionPoint == null) {
-      throw new RuntimeException("x point " + URLNormalizer.X_POINT_ID
-              + " not found.");
-    }
+	/**
+	 * Finds the best-suited normalizer plugin for a given scope.
+	 * 
+	 * @param scope
+	 *          Scope for which we seek a normalizer plugin.
+	 * @return a list of extensions to be used for this scope. If none, returns
+	 *         empty list.
+	 * @throws PluginRuntimeException
+	 */
+	@SuppressWarnings("unchecked")
+	private List<Extension> getExtensions(String scope) 
+	{
+	    ObjectCache objectCache = ObjectCache.get(conf);
+	    List<Extension> extensions = (List<Extension>) objectCache.getObject(URLNormalizer.X_POINT_ID + "_x_" + scope);
+	
+	    // Just compare the reference:
+	    // if this is the empty list, we know we will find no extension.
+	    if (extensions == EMPTY_EXTENSION_LIST) 
+	    {
+	    	return EMPTY_EXTENSION_LIST;
+	    }
+	
+	    if (extensions == null) 
+	    {
+	    	extensions = findExtensions(scope);
+	    	if (extensions != null) 
+	    	{
+	    		objectCache.setObject(URLNormalizer.X_POINT_ID + "_x_" + scope, extensions);
+	    	} 
+	    	else 
+	    	{
+	    		// Put the empty extension list into cache to remember we don't know any related extension.
+	    		objectCache.setObject(URLNormalizer.X_POINT_ID + "_x_" + scope, EMPTY_EXTENSION_LIST);
+	    		extensions = EMPTY_EXTENSION_LIST;
+	    	}
+	    }
+	    return extensions;
+	}
 
-    normalizers = (URLNormalizer[])objectCache.getObject(URLNormalizer.X_POINT_ID + "_" + scope);
-    if (normalizers == null) {
-      normalizers = getURLNormalizers(scope);
-    }
-    if (normalizers == EMPTY_NORMALIZERS) {
-      normalizers = (URLNormalizer[])objectCache.getObject(URLNormalizer.X_POINT_ID + "_" + SCOPE_DEFAULT);
-      if (normalizers == null) {
-        normalizers = getURLNormalizers(SCOPE_DEFAULT);
-      }
-    }
-    
-    loopCount = conf.getInt("urlnormalizer.loop.count", 1);
-  }
-
-  /**
-   * Function returns an array of {@link URLNormalizer}s for a given scope,
-   * with a specified order.
-   * 
-   * @param scope
-   *          The scope to return the <code>Array</code> of
-   *          {@link URLNormalizer}s for.
-   * @return An <code>Array</code> of {@link URLNormalizer}s for the given
-   *         scope.
-   * @throws PluginRuntimeException
-   */
-  URLNormalizer[] getURLNormalizers(String scope) {
-    List<Extension> extensions = getExtensions(scope);
-    ObjectCache objectCache = ObjectCache.get(conf);
-    
-    if (extensions == EMPTY_EXTENSION_LIST) {
-      return EMPTY_NORMALIZERS;
-    }
-    
-    List<URLNormalizer> normalizers = new Vector<URLNormalizer>(extensions.size());
-
-    Iterator<Extension> it = extensions.iterator();
-    while (it.hasNext()) {
-      Extension ext = it.next();
-      URLNormalizer normalizer = null;
-      try {
-        // check to see if we've cached this URLNormalizer instance yet
-        normalizer = (URLNormalizer) objectCache.getObject(ext.getId());
-        if (normalizer == null) {
-          // go ahead and instantiate it and then cache it
-          normalizer = (URLNormalizer) ext.getExtensionInstance();
-          objectCache.setObject(ext.getId(), normalizer);
-        }
-        normalizers.add(normalizer);
-      } catch (PluginRuntimeException e) {
-        e.printStackTrace();
-        LOG.warn("URLNormalizers:PluginRuntimeException when "
-                + "initializing url normalizer plugin "
-                + ext.getDescriptor().getPluginId()
-                + " instance in getURLNormalizers "
-                + "function: attempting to continue instantiating plugins");
-      }
-    }
-    return normalizers.toArray(new URLNormalizer[normalizers
-            .size()]);
-  }
-
-  /**
-   * Finds the best-suited normalizer plugin for a given scope.
-   * 
-   * @param scope
-   *          Scope for which we seek a normalizer plugin.
-   * @return a list of extensions to be used for this scope. If none, returns
-   *         empty list.
-   * @throws PluginRuntimeException
-   */
-  @SuppressWarnings("unchecked")
-  private List<Extension> getExtensions(String scope) {
-    ObjectCache objectCache = ObjectCache.get(conf);
-    List<Extension> extensions = 
-      (List<Extension>) objectCache.getObject(URLNormalizer.X_POINT_ID + "_x_"
-                                                + scope);
-
-    // Just compare the reference:
-    // if this is the empty list, we know we will find no extension.
-    if (extensions == EMPTY_EXTENSION_LIST) {
-      return EMPTY_EXTENSION_LIST;
-    }
-
-    if (extensions == null) {
-      extensions = findExtensions(scope);
-      if (extensions != null) {
-        objectCache.setObject(URLNormalizer.X_POINT_ID + "_x_" + scope, extensions);
-      } else {
-        // Put the empty extension list into cache
-        // to remember we don't know any related extension.
-        objectCache.setObject(URLNormalizer.X_POINT_ID + "_x_" + scope, EMPTY_EXTENSION_LIST);
-        extensions = EMPTY_EXTENSION_LIST;
-      }
-    }
-    return extensions;
-  }
-
-  /**
-   * searches a list of suitable url normalizer plugins for the given scope.
-   * 
-   * @param scope
-   *          Scope for which we seek a url normalizer plugin.
-   * @return List - List of extensions to be used for this scope. If none,
-   *         returns null.
-   * @throws PluginRuntimeException
-   */
-  private List<Extension> findExtensions(String scope) {
-
-    String[] orders = null;
-    String orderlist = conf.get("urlnormalizer.order." + scope);
-    if (orderlist == null) orderlist = conf.get("urlnormalizer.order");
-    if (orderlist != null && !orderlist.trim().equals("")) {
-      orders = orderlist.trim().split("\\s+");
-    }
-    String scopelist = conf.get("urlnormalizer.scope." + scope);
-    Set<String> impls = null;
-    if (scopelist != null && !scopelist.trim().equals("")) {
-      String[] names = scopelist.split("\\s+");
-      impls = new HashSet<String>(Arrays.asList(names));
-    }
-    Extension[] extensions = this.extensionPoint.getExtensions();
-    HashMap<String, Extension> normalizerExtensions = new HashMap<String, Extension>();
-    for (int i = 0; i < extensions.length; i++) {
-      Extension extension = extensions[i];
-      if (impls != null && !impls.contains(extension.getClazz()))
-        continue;
-      normalizerExtensions.put(extension.getClazz(), extension);
-    }
-    List<Extension> res = new ArrayList<Extension>();
-    if (orders == null) {
-      res.addAll(normalizerExtensions.values());
-    } else {
-      // first add those explicitly named in correct order
-      for (int i = 0; i < orders.length; i++) {
-        Extension e = normalizerExtensions.get(orders[i]);
-        if (e != null) {
-          res.add(e);
-          normalizerExtensions.remove(orders[i]);
-        }
-      }
-      // then add all others in random order
-      res.addAll(normalizerExtensions.values());
-    }
-    return res;
-  }
+	/**
+	 * searches a list of suitable url normalizer plugins for the given scope.
+	 * 
+	 * @param scope      Scope for which we seek a url normalizer plugin.
+	 * @return List - List of extensions to be used for this scope. If none, returns null.
+	 * @throws PluginRuntimeException
+	 */
+	private List<Extension> findExtensions(String scope) 
+	{
+	    String[] orders = null;
+	    String orderlist = conf.get("urlnormalizer.order." + scope);
+	    if (orderlist == null) orderlist = conf.get("urlnormalizer.order");
+	    if (orderlist != null && !orderlist.trim().equals("")) 
+	    {
+	    	orders = orderlist.trim().split("\\s+");
+	    }
+	    String scopelist = conf.get("urlnormalizer.scope." + scope);
+	    Set<String> impls = null;
+	    if (scopelist != null && !scopelist.trim().equals("")) 
+	    {
+	    	String[] names = scopelist.split("\\s+");
+	    	impls = new HashSet<String>(Arrays.asList(names));
+	    }
+	    Extension[] extensions = this.extensionPoint.getExtensions();
+	    HashMap<String, Extension> normalizerExtensions = new HashMap<String, Extension>();
+	    for (int i = 0; i < extensions.length; i++) 
+	    {
+	    	Extension extension = extensions[i];
+	    	if (impls != null && !impls.contains(extension.getClazz()))
+	    	{
+	    		continue;
+	    	}
+	    	normalizerExtensions.put(extension.getClazz(), extension);
+	    }
+	    List<Extension> res = new ArrayList<Extension>();
+	    if (orders == null) 
+	    {
+	    	res.addAll(normalizerExtensions.values());
+	    } 
+	    else 
+	    {
+	    	// first add those explicitly named in correct order
+	    	for (int i = 0; i < orders.length; i++) 
+	    	{
+		        Extension e = normalizerExtensions.get(orders[i]);
+		        if (e != null) 
+		        {
+		        	res.add(e);
+		        	normalizerExtensions.remove(orders[i]);
+		        }
+	    	}
+	    	// then add all others in random order
+	    	res.addAll(normalizerExtensions.values());
+	    }
+	    return res;
+	}
 
   	/**
   	 * Normalize
